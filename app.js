@@ -1,6 +1,10 @@
 var sqlite3 = require('sqlite3')
 var express = require('express')
 var app = express()
+const bodyParser = require('body-parser');
+const jwt = require('jsonwebtoken');
+
+const secretKey = 'vishesh';
 
 app.get('/',function(req,res) {
     res.json("Hi welcome")
@@ -12,6 +16,9 @@ app.use((req,res,next) => {
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
     next();
 })
+
+app.use(bodyParser.json())
+app.use(bodyParser.urlencoded({ extended: false}))
 
 app.get('/getQuestions', function(req,res) {
 
@@ -29,11 +36,11 @@ app.get('/getQuestions', function(req,res) {
 
 });
 
-app.get('/getAnswers', function(req,res) {
+app.get('/getAnswer', function(req,res) {
 
     const db = new sqlite3.Database('answers.db');
     
-    db.run('SELECT * FROM answers', (err, rows) => {
+    db.all('SELECT * FROM answers', (err, rows) => {
         if (err) {
             console.error(err);
             return;
@@ -49,7 +56,7 @@ app.get('/getStudents', function(req,res) {
 
     const db = new sqlite3.Database('students.db');
     
-    db.run('SELECT * FROM students', (err, rows) => {
+    db.all('SELECT * FROM students', (err, rows) => {
         if (err) {
             console.error(err);
             return;
@@ -62,16 +69,20 @@ app.get('/getStudents', function(req,res) {
 });
 
 app.post('/postAnswers', function(req,res) {
-    console.log(req.body);
     const data = req.body;
-
     const db = new sqlite3.Database('answers.db');
 
-    for (const answer of data) {
-        db.run(`
-      INSERT INTO answers (email, question, selected, correct, ques_type) VALUES (?, ?, ?, ?, ?)
-      `, [answer.email, answer.question, answer.selected, answer.correct, answer.ques_type]);
-    }
+    try {
+          for (const answer of data) {
+            db.run(`
+              INSERT INTO answers (email, question, selected, correct, ques_type) VALUES (?, ?, ?, ?, ?)
+            `, [answer.email, answer.question, answer.selected, answer.correct, answer.ques_type]);
+          }
+          res.status(200).send(JSON.stringify({ message: 'Answers saved successfully!'}));
+      } catch (error) {
+        console.error(error);
+        res.status(500).send('Internal Server Error');
+      }
 
     db.close()
 
@@ -79,19 +90,146 @@ app.post('/postAnswers', function(req,res) {
 
 app.post('/postStudents', function(req,res) {
 
-    const studentsData = req.body;
+    const data = req.body;
+    const db = new sqlite3.Database('students.db');
+    try {
+            db.run(`
+        INSERT INTO students (name, qualification, passedout, email, phonenumber, password) VALUES (?, ?, ?, ?, ?, ?)
+        `, [data.name, data.qualification, data.passedout, data.email, data.phone, data.password]);
+
+        res.status(200).send(JSON.stringify({ message: 'Student details saved successfully!' }));
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).send('Internal Server Error');
+    }
+    db.close()
+});
+
+app.post('/checkEmail', function (req, res) {
+    const data = req.body;
+    const db = new sqlite3.Database('students.db');
+    db.get('SELECT COUNT(*) AS count FROM students WHERE email = ?', [data.email], (err, row) => {
+        if (err) {
+            console.error(err);
+            res.status(500).send('Internal Server Error');
+            db.close(); // Close the database connection in case of an error
+            return;
+        }
+        if (row.count > 0) {
+            res.status(200).send(JSON.stringify({ exists: true }));
+        } else {
+            res.status(200).send(JSON.stringify({ exists: false }));
+        }
+
+        db.close(); // Close the database connection after the query is complete
+    });
+});
+
+
+app.post('/checkStudents', function(req,res) {
+        const data = req.body;
+        const db = new sqlite3.Database('students.db');
+
+        const token = jwt.sign({ data }, secretKey, { expiresIn: '1h' });
+        if(data.email === 'Vishesh@gmail.com' && data.password == 'Vishesh@123'){
+            res.status(200).send(JSON.stringify({ message: 'Correct credentials' ,token: token, role: 'Admin'}));
+        } else{
+            try {
+                db.get(
+                    'SELECT * FROM students WHERE email = ? AND password = ?',
+                    [data.email, data.password],
+                    (err, row) => {
+                        if (err) {
+                            console.error(err);
+                            res.status(500).send('Internal Server Error');
+                        } else if (row) {
+                            const token = jwt.sign({ row }, secretKey, { expiresIn: '1h' });
+                            res.status(200).send(JSON.stringify({ message: 'Correct credentials' ,token: token, role: 'User'}));
+                        } else {
+                            res.status(401).send(JSON.stringify({ message: 'Not valid' }));
+                        }
+                        db.close();
+                    }
+                );
+            } catch (error) {
+                console.error(error);
+                res.status(500).send('Internal Server Error');
+                db.close();
+            }
+        }
+});
+
+app.post('/getStudents', function(req,res) {
+    records = req.body
+    const db = new sqlite3.Database('students.db');
+    
+    db.all('SELECT * FROM students limit ? OFFSET ?',records.records ,records.records-10, (err, rows) => {
+        if (err) {
+            console.error(err);
+            return;
+        }
+        res.json(rows);
+    });
+
+    db.close()
+});
+
+app.get('/getStudent', function(req,res) {
 
     const db = new sqlite3.Database('students.db');
-
-    for (const data of studentsData) {
-        db.run(`
-      INSERT INTO students (name, qualification, passedout, email, phoenumber, password) VALUES (?, ?, ?, ?, ?, ?)
-      `, [data.name, data.qualification, data.passedout, data.email, data.phonenumber, data.password]);
-    }
+    
+    db.all('SELECT COUNT(*) AS count FROM students', (err, rows) => {
+        if (err) {
+            console.error(err);
+            return;
+        }
+        res.json(rows);
+    });
 
     db.close()
 
 });
+
+app.post('/getAnswers', function(req,res) {
+
+    var data = req.body
+    const db = new sqlite3.Database('answers.db');
+    
+    db.all('SELECT * FROM answers where email = ? limit 25', [data.email], (err, rows) => {
+        if (err) {
+            console.error(err);
+            return;
+        }
+        res.json(rows);
+    });
+
+    db.close()
+
+});
+
+app.post('/checkTestAttempted', function(req,res) {
+
+    var data = req.body
+    const db = new sqlite3.Database('answers.db');
+    
+    db.all('SELECT * FROM answers where email = ?',[data.email], (err, rows) => {
+        if (err) {
+            console.error(err);
+            return;
+        }
+        if(rows.length > 0){
+            res.status(200).send(JSON.stringify({ message: 'Attempted' }));
+        }
+        else {
+            res.status(200).send(JSON.stringify({ message: 'Not attempted' }));
+        }
+    });
+
+    db.close()
+
+});
+
 
 app.listen(3000)
 
